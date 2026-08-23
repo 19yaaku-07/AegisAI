@@ -1,0 +1,47 @@
+services:
+  # ── Backend: Flask API (Web Service) ─────────────────────────────────────
+  - type: web
+    name: aegisai-backend
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt && apt-get install -y tesseract-ocr
+    startCommand: gunicorn app:app --workers 2 --bind 0.0.0.0:$PORT --timeout 120
+    healthCheckPath: /health
+    envVars:
+      - key: IBM_WATSONX_API_KEY
+        sync: false          # Set manually in Render dashboard — secret
+      - key: IBM_WATSONX_URL
+        value: https://us-south.ml.cloud.ibm.com
+      - key: IBM_WATSONX_PROJECT_ID
+        sync: false          # Set manually in Render dashboard — secret
+      - key: IBM_WATSONX_MODEL_ID
+        value: ibm/granite-3-8b-instruct
+      - key: FLASK_DEBUG
+        value: "false"
+      - key: CORS_ORIGINS
+        value: https://aegisai-frontend.onrender.com
+      - key: PYTHON_VERSION
+        value: "3.11.0"
+
+  # ── Frontend: React + Vite (Static Site) ─────────────────────────────────
+  - type: web
+    name: aegisai-frontend
+    runtime: static
+    rootDir: aegis-frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    pullRequestPreviewsEnabled: false
+    headers:
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_BASE
+        value: https://aegisai-34mr.onrender.com/api

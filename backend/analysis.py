@@ -1,24 +1,21 @@
 """
-analysis.py — Local IBM Granite threat analysis via Ollama.
+analysis.py — IBM Watsonx AI threat analysis via ibm-watsonx-ai SDK.
 
-Uses IBM Granite 3.2 2B running locally through Ollama.
-
-No IBM Watsonx API key or IBM Cloud Project ID is required.
-
-Ollama must be running locally at:
-    http://localhost:11434
+Required environment variables:
+    IBM_WATSONX_API_KEY      — IAM API key from IBM Cloud
+    IBM_WATSONX_URL          — Service URL (e.g. https://us-south.ml.cloud.ibm.com)
+    IBM_WATSONX_PROJECT_ID   — Project ID from Watsonx project settings
+    IBM_WATSONX_MODEL_ID     — (optional) model ID, default: ibm/granite-3-8b-instruct
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import textwrap
 from typing import TypedDict
-
-import requests
-
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +25,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 class AnalysisError(Exception):
-    """Raised when local Granite analysis fails."""
+    """Raised when IBM Watsonx analysis fails."""
 
 
 # ---------------------------------------------------------------------------
@@ -49,16 +46,6 @@ VALID_RISK_LEVELS = {
     "high",
     "critical",
 }
-
-
-# ---------------------------------------------------------------------------
-# Ollama configuration
-# ---------------------------------------------------------------------------
-
-OLLAMA_URL = "http://localhost:11434/api/chat"
-
-# This is the Granite model you installed with Ollama.
-MODEL_NAME = "granite3.2:2b"
 
 
 # ---------------------------------------------------------------------------
@@ -171,19 +158,10 @@ _SYSTEM_PROMPT = textwrap.dedent("""\
 # ---------------------------------------------------------------------------
 
 def _build_user_message(text: str) -> str:
-    """
-    Limit the amount of text sent to the local model.
-    """
-
     excerpt = text[:4000]
-
     if len(text) > 4000:
         excerpt += "\n[... text truncated for analysis ...]"
-
-    return (
-        "Analyse this text for cybersecurity threats:\n\n"
-        + excerpt
-    )
+    return "Analyse this text for cybersecurity threats:\n\n" + excerpt
 
 
 # ---------------------------------------------------------------------------
@@ -191,61 +169,32 @@ def _build_user_message(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _extract_json(raw: str) -> dict:
-    """
-    Extract the first valid JSON object from Granite's response.
-
-    Handles:
-    - plain JSON
-    - JSON inside markdown fences
-    - additional text around JSON
-    """
-
+    """Extract the first valid JSON object from the model's response."""
     if not raw:
-        raise AnalysisError(
-            "Granite returned an empty response."
-        )
+        raise AnalysisError("Model returned an empty response.")
 
     raw = raw.strip()
-
-    # Remove markdown code fences.
-    raw = re.sub(
-        r"```(?:json)?",
-        "",
-        raw,
-        flags=re.IGNORECASE,
-    )
-
+    raw = re.sub(r"```(?:json)?", "", raw, flags=re.IGNORECASE)
     raw = raw.replace("```", "").strip()
 
-    # Try the complete response first.
     try:
         parsed = json.loads(raw)
-
         if isinstance(parsed, dict):
             return parsed
-
     except json.JSONDecodeError:
         pass
 
-    # If there is extra text, find the JSON object.
-    match = re.search(
-        r"\{[\s\S]*\}",
-        raw,
-    )
-
+    match = re.search(r"\{[\s\S]*\}", raw)
     if match:
         try:
             parsed = json.loads(match.group(0))
-
             if isinstance(parsed, dict):
                 return parsed
-
         except json.JSONDecodeError:
             pass
 
     raise AnalysisError(
-        "Granite did not return valid JSON. "
-        f"Raw response: {raw[:500]!r}"
+        f"Model did not return valid JSON. Raw response: {raw[:500]!r}"
     )
 
 
@@ -253,294 +202,114 @@ def _extract_json(raw: str) -> dict:
 # Validate and normalise result
 # ---------------------------------------------------------------------------
 
-def _validate_and_normalise(
-    data: dict,
-) -> ThreatAnalysis:
-    """
-    Validate Granite's response and make sure the frontend
-    always receives the expected structure.
-    """
-
-    # Risk level
-    risk = str(
-        data.get("risk_level", "")
-    ).lower().strip()
-
+def _validate_and_normalise(data: dict) -> ThreatAnalysis:
+    risk = str(data.get("risk_level", "")).lower().strip()
     if risk not in VALID_RISK_LEVELS:
-        logger.warning(
-            "Granite returned invalid risk level %r. "
-            "Defaulting to medium.",
-            risk,
-        )
+        logger.warning("Model returned invalid risk level %r. Defaulting to medium.", risk)
         risk = "medium"
 
-    # Threat category
-    category = str(
-        data.get(
-            "threat_category",
-            "Unknown",
-        )
-    ).strip()
-
-    if not category:
-        category = "Unknown"
-
-    # Explanation
-    explanation = str(
-        data.get(
-            "explanation",
-            "",
-        )
-    ).strip()
-
+    category = str(data.get("threat_category", "Unknown")).strip() or "Unknown"
+    explanation = str(data.get("explanation", "")).strip()
     if not explanation:
-        explanation = (
-            "Analysis completed. "
-            "Review the content carefully before taking action."
-        )
+        explanation = "Analysis completed. Review the content carefully before taking action."
 
-    # Recommendations
-    recommendations = data.get(
-        "recommendations",
-        [],
-    )
+    recommendations = data.get("recommendations", [])
+    if not isinstance(recommendations, list):
+        recommendations = [str(recommendations)]
+    recommendations = [str(item).strip() for item in recommendations if str(item).strip()]
 
-    if not isinstance(
-        recommendations,
-        list,
-    ):
-        recommendations = [
-            str(recommendations)
-        ]
-
-    recommendations = [
-        str(item).strip()
-        for item in recommendations
-        if str(item).strip()
-    ]
-
-    # Make sure we have at least 3.
-    default_recommendations = [
+    defaults = [
         "Treat this content with caution.",
         "Do not click links or download unexpected attachments.",
         "Report suspicious content if you are unsure.",
     ]
-
     while len(recommendations) < 3:
-        recommendations.append(
-            default_recommendations[
-                len(recommendations)
-            ]
-        )
-
-    # Keep exactly 3 for the frontend.
-    recommendations = recommendations[:3]
+        recommendations.append(defaults[len(recommendations)])
 
     return ThreatAnalysis(
         risk_level=risk,
         threat_category=category,
         explanation=explanation,
-        recommendations=recommendations,
+        recommendations=recommendations[:3],
     )
 
 
 # ---------------------------------------------------------------------------
-# Check Ollama
+# Call IBM Watsonx
 # ---------------------------------------------------------------------------
 
-def _check_ollama() -> None:
-    """
-    Check whether Ollama is running and the Granite model exists.
-    """
+def _call_watsonx(text: str) -> str:
+    """Send text to IBM Watsonx and return the raw model response string."""
+    api_key    = os.environ.get("IBM_WATSONX_API_KEY", "").strip()
+    url        = os.environ.get("IBM_WATSONX_URL", "https://us-south.ml.cloud.ibm.com").strip()
+    project_id = os.environ.get("IBM_WATSONX_PROJECT_ID", "").strip()
+    model_id   = os.environ.get("IBM_WATSONX_MODEL_ID", "ibm/granite-3-8b-instruct").strip()
 
-    try:
-        response = requests.get(
-            "http://localhost:11434/api/tags",
-            timeout=5,
+    if not api_key:
+        raise AnalysisError(
+            "IBM_WATSONX_API_KEY is not set. "
+            "Please configure the environment variable."
+        )
+    if not project_id:
+        raise AnalysisError(
+            "IBM_WATSONX_PROJECT_ID is not set. "
+            "Please configure the environment variable."
         )
 
-        response.raise_for_status()
-
-    except requests.exceptions.ConnectionError as exc:
+    try:
+        from ibm_watsonx_ai import APIClient, Credentials
+        from ibm_watsonx_ai.foundation_models import ModelInference
+        from ibm_watsonx_ai.metanames import GenTextParamsMetaNames as GenParams
+    except ImportError as exc:
         raise AnalysisError(
-            "Cannot connect to Ollama. "
-            "Please make sure Ollama is running."
-        ) from exc
-
-    except requests.exceptions.RequestException as exc:
-        raise AnalysisError(
-            f"Could not connect to Ollama: {exc}"
+            "ibm-watsonx-ai package is not installed. "
+            "Run: pip install ibm-watsonx-ai"
         ) from exc
 
     try:
-        models = response.json().get(
-            "models",
-            [],
-        )
-
-        installed_models = [
-            model.get("name", "")
-            for model in models
-        ]
-
-        if MODEL_NAME not in installed_models:
-            raise AnalysisError(
-                f"The required Granite model "
-                f"'{MODEL_NAME}' was not found in Ollama. "
-                f"Run: ollama pull {MODEL_NAME}"
-            )
-
-    except (ValueError, TypeError) as exc:
-        raise AnalysisError(
-            "Ollama returned an unexpected response."
-        ) from exc
-
-
-# ---------------------------------------------------------------------------
-# Call Granite through Ollama
-# ---------------------------------------------------------------------------
-
-def _call_granite(
-    text: str,
-) -> str:
-    """
-    Send text to the local IBM Granite model through Ollama.
-    """
-
-    _check_ollama()
-
-    payload = {
-        "model": MODEL_NAME,
-
-        "messages": [
-            {
-                "role": "system",
-                "content": _SYSTEM_PROMPT,
+        credentials = Credentials(url=url, api_key=api_key)
+        client      = APIClient(credentials)
+        model       = ModelInference(
+            model_id   = model_id,
+            api_client = client,
+            project_id = project_id,
+            params     = {
+                GenParams.MAX_NEW_TOKENS: 600,
+                GenParams.TEMPERATURE:    0.1,
             },
-            {
-                "role": "user",
-                "content": _build_user_message(text),
-            },
-        ],
-
-        "stream": False,
-
-        # Ask Ollama for JSON output.
-        "format": "json",
-
-        "options": {
-            "temperature": 0.1,
-            "num_predict": 600,
-        },
-    }
-
-    try:
-
-        response = requests.post(
-            OLLAMA_URL,
-            json=payload,
-            timeout=180,
         )
+        prompt = f"{_SYSTEM_PROMPT}\n\n{_build_user_message(text)}"
+        result = model.generate_text(prompt=prompt)
+        return result if isinstance(result, str) else str(result)
 
-        response.raise_for_status()
-
-    except requests.exceptions.ConnectionError as exc:
-        raise AnalysisError(
-            "Cannot connect to Ollama. "
-            "Make sure Ollama is running."
-        ) from exc
-
-    except requests.exceptions.Timeout as exc:
-        raise AnalysisError(
-            "Granite analysis timed out. "
-            "The local model may need more time."
-        ) from exc
-
-    except requests.exceptions.HTTPError as exc:
-        raise AnalysisError(
-            f"Ollama returned an HTTP error: "
-            f"{exc}"
-        ) from exc
-
-    except requests.exceptions.RequestException as exc:
-        raise AnalysisError(
-            f"Ollama request failed: {exc}"
-        ) from exc
-
-    try:
-
-        result = response.json()
-
-    except ValueError as exc:
-        raise AnalysisError(
-            "Ollama returned invalid JSON."
-        ) from exc
-
-    try:
-
-        raw_content = (
-            result
-            .get("message", {})
-            .get("content", "")
-        )
-
-    except AttributeError as exc:
-        raise AnalysisError(
-            "Unexpected response received from Ollama."
-        ) from exc
-
-    if not raw_content:
-        raise AnalysisError(
-            "Granite returned an empty response."
-        )
-
-    return raw_content
+    except AnalysisError:
+        raise
+    except Exception as exc:
+        raise AnalysisError(f"IBM Watsonx request failed: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 
-def analyse_text(
-    text: str,
-) -> ThreatAnalysis:
+def analyse_text(text: str) -> ThreatAnalysis:
     """
-    Analyse extracted text for cybersecurity threats.
+    Analyse extracted text for cybersecurity threats using IBM Watsonx.
 
-    Parameters
-    ----------
-    text:
-        Plain-text content extracted from the uploaded file.
+    Returns a ThreatAnalysis dict with risk_level, threat_category,
+    explanation, and recommendations.
 
-    Returns
-    -------
-    ThreatAnalysis:
-        Dictionary containing:
-        - risk_level
-        - threat_category
-        - explanation
-        - recommendations
-
-    Raises
-    ------
-    AnalysisError:
-        If Ollama or Granite fails.
+    Raises AnalysisError on failure.
     """
-
-    # No text to analyse.
     if not text or not text.strip():
-
         return ThreatAnalysis(
             risk_level="safe",
-
             threat_category="No Content",
-
             explanation=(
                 "No readable text was found in the file. "
                 "The image may be blank, contain only graphics, "
                 "or the text could not be extracted by OCR."
             ),
-
             recommendations=[
                 "Verify the file contains the content you intended to scan.",
                 "Try a higher-resolution version of the image.",
@@ -548,11 +317,6 @@ def analyse_text(
             ],
         )
 
-    # Call local IBM Granite.
-    raw_content = _call_granite(text)
-
-    # Convert Granite's response into JSON.
-    parsed = _extract_json(raw_content)
-
-    # Validate the result.
+    raw_content = _call_watsonx(text)
+    parsed      = _extract_json(raw_content)
     return _validate_and_normalise(parsed)
