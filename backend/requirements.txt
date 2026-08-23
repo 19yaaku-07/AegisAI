@@ -1,0 +1,34 @@
+# ============================================================
+# AEGIS-AI Backend — Python Dependencies
+# ============================================================
+# Install everything:
+#   pip install -r requirements.txt
+#
+# Tesseract OCR binary is also required (separate install):
+#   Windows: https://github.com/UB-Mannheim/tesseract/wiki
+#   macOS:   brew install tesseract
+#   Linux:   apt-get install tesseract-ocr
+# ============================================================
+
+# --- Web framework ---
+Flask>=3.1.0
+flask-cors>=6.0.0
+
+# --- Environment variables ---
+python-dotenv>=1.0.0
+
+# --- IBM Watsonx AI (IBM Bob / Granite) ---
+ibm-watsonx-ai>=1.1.2
+
+# --- OCR ---
+Pillow>=10.0.0
+pytesseract>=0.3.10
+
+# --- PDF processing ---
+PyMuPDF>=1.23.0
+
+# --- Production WSGI server (Windows) ---
+waitress>=3.0.0
+
+# --- Production WSGI server (Linux/Docker) ---
+# gunicorn>=21.0.0  

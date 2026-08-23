@@ -1,0 +1,108 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    /* ── Backgrounds ─────────────────────────────── */
+    --color-bg:        #0a0c10;
+    --color-surface:   #111318;
+    --color-surface-2: #181b22;
+    --color-border:    #1e2330;
+
+    /* ── Typography ──────────────────────────────── */
+    --color-text:      #e8eaf0;
+    --color-muted:     #9ca3af;
+
+    /* ── Brand accent ────────────────────────────── */
+    --color-accent:       #3b82f6;
+    --color-accent-hover: #2563eb;
+
+    /*
+     * Risk level colors are intentionally NOT defined as CSS variables here.
+     * Single source of truth: src/lib/risk.ts → getRisk(level).hex
+     * CSS variables here would create a second definition that can silently drift.
+     */
+  }
+
+  html {
+    scroll-behavior: smooth;
+    background-color: var(--color-bg);
+    color: var(--color-text);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    font-family: -apple-system, "Segoe UI", system-ui, Inter, sans-serif;
+    line-height: 1.6;
+    overflow-x: hidden;
+    margin: 0;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 3px;
+    border-radius: 4px;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+/* ── CSS-only perpetual animations (no JS timer, GPU-composited) ─────────── */
+
+@keyframes aegis-float-up {
+  0%   { opacity: 0;   transform: translateY(0);    }
+  20%  { opacity: 0.7; transform: translateY(0);    }
+  80%  { opacity: 0.7; transform: translateY(-20px);}
+  100% { opacity: 0;   transform: translateY(-40px);}
+}
+
+@keyframes aegis-bounce-y {
+  0%, 100% { transform: translateY(0);  }
+  50%       { transform: translateY(6px);}
+}
+
+@keyframes aegis-pulse-opacity {
+  0%, 100% { opacity: 1;   }
+  50%       { opacity: 0.4; }
+}
+
+.animate-float-pill {
+  animation: aegis-float-up 5s ease-in-out infinite;
+}
+
+.animate-bounce-y {
+  animation: aegis-bounce-y 2s ease-in-out infinite;
+}
+
+.animate-pulse-opacity {
+  animation: aegis-pulse-opacity 1.5s ease-in-out infinite;
+}
+
+/* ── Reduced motion ──────────────────────────────────────────────────────── */
+/*
+ * CSS layer: collapses CSS transitions/animations.
+ * Framer Motion layer: handled via useReducedMotion() in motion.ts —
+ * this CSS rule does NOT stop FM animations; the hook is required too.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration:       0.01ms !important;
+    animation-iteration-count: 1     !important;
+    transition-duration:      0.01ms !important;
+    scroll-behavior: auto           !important;
+  }
+}
+
+/* ── Scrollbar ───────────────────────────────────────────────────────────── */
+::-webkit-scrollbar       { width: 6px; }
+::-webkit-scrollbar-track { background: var(--color-bg); }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-muted); }
